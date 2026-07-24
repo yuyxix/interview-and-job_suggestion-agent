@@ -9,4 +9,5 @@ from docx import Document
 # b = os.path.dirname(a)
 # print(b)
 
-table
+a = 'hello word hello china'
+print(a.split(' '))
