@@ -38,6 +38,9 @@ text_splitter = RecursiveCharacterTextSplitter(
 results = text_splitter.split_text(text)
 
 # 遍历
+print(results)
+print(type(results))
 for item in results:
     print(item)
+    print(type(item))
     print('=' * 50)

@@ -25,6 +25,8 @@ embedding_model = embedding_functions.SentenceTransformerEmbeddingFunction(
 result = vector.create_collection(
     name=collections_name,  # 集合名称
     embedding_function=embedding_model,  # 自定义嵌入函数
+    # 设置向两极之间的比对关系为余弦相似度 --- 默认为l2，欧氏距离
+    metadata={'hnsw:space': 'cosine'}
 )
 
 print(result)

@@ -8,6 +8,10 @@ from docx import Document
 # print(type(a))
 # b = os.path.dirname(a)
 # print(b)
+#
+# a = 'hello word hello china'
+# print(a.split(' '))
 
-a = 'hello word hello china'
-print(a.split(' '))
+
+a = (1, 2)
+print(a[0])

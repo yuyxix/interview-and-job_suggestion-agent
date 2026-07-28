@@ -25,6 +25,7 @@ def txt_loader(file_path):
 if __name__ == '__main__':
     txt1 = txt_loader(file1_path)
     print(txt1)
+    print(type(txt1))
     print('=' * 50)
     txt2 = txt_loader(file2_path)
     print(txt2)
