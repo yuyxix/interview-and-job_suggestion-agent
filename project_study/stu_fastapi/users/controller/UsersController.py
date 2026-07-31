@@ -1,12 +1,34 @@
-# 接口定义的文件
-from users.entity.Users import Users
-from users.service import UserService
 from fastapi import APIRouter
+from users.service import UsersService
+from users.entity import CheckEntity
+from users.service import UsersService
+from users.service.UsersService import Verification_Module
 
-# 子路由对象
-api_router = APIRouter()
+# 创建子路由对象
+users_router = APIRouter()
 
-# 登录
-@api_router.post("/login")
-def login(users: Users):
-    return UserService.login(users)
+@users_router.get(
+    path='/sendEmail',
+    # 接口简短摘要，显示在SwaggerUI的接口列表中
+    summary='发送邮件',
+    # 接口详细描述，显示在SwaggerUI的接口详情中
+    description='给用户输入的邮箱号发送验证码，其中有个参数 email,表示用户输入的邮箱号信息',
+    # 分组
+    tags=['users'],
+)
+def send_email(email: str):
+    # 调用服务层方法 --- 服务层方法的返回值在这里可以就是直接返回给客户端请求的响应数据
+    ver_code = UsersService.send_email(email)
+    return ver_code
+
+@users_router.post(
+    path='/Verification_Module',
+    summary='验证模块',
+    description='验证用户输入的验证码是否正确，其中有个参数 code,表示用户输入的验证码信息',
+    tags=['users'],
+)
+def verification_module(verifycode: CheckEntity.VerifyCode):
+    # 调用服务层方法
+    flag = UsersService.Verification_Module(verifycode)
+    return flag
+    # return Verification_Module(code)
