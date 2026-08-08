@@ -15,11 +15,11 @@ documents = [
 
 # 加载分词模型
 tokenizer = AutoTokenizer.from_pretrained(
-    pretrained_model_name_or_path=r'G:\models\bge-base-zh-v1.5',
+    pretrained_model_name_or_path=r'E:\models\bge-base-zh-v1.5',
 )
 # 加载模型
 model = AutoModel.from_pretrained(
-    pretrained_model_name_or_path=r'G:\models\bge-base-zh-v1.5',
+    pretrained_model_name_or_path=r'E:\models\bge-base-zh-v1.5',
 )
 # 模型评估模式
 model.eval()

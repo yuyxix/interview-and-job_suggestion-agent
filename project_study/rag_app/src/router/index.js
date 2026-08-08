@@ -12,8 +12,16 @@ const routes = [
         component:()=>import('../components/TestTwo.vue')
     },
     {
+        path: '/test', // 访问路径，和服务器的请求路径访问规则一致
+        component:()=>import('../components/test.vue')
+    },
+    {
         path: '', // 访问路径，和服务器的请求路径访问规则一致
         component:()=>import('../components/Login.vue')
+    },
+    {
+        path: '/Chat', // 访问路径，和服务器的请求路径访问规则一致
+        component:()=>import('../components/Chat.vue')
     }
 ]
 //设置路由模式为history模式 --- 默认为hash模式，访问路径中有一个#号

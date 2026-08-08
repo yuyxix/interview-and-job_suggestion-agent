@@ -1,8 +1,11 @@
 from fastapi import APIRouter
-from users.service import UsersService
+
+from ai import LLM
+from users.dao import UsersDao
 from users.entity import CheckEntity
 from users.service import UsersService
-from users.service.UsersService import Verification_Module
+
+
 
 # 创建子路由对象
 users_router = APIRouter()
@@ -32,3 +35,27 @@ def verification_module(verifycode: CheckEntity.VerifyCode):
     flag = UsersService.Verification_Module(verifycode)
     return flag
     # return Verification_Module(code)
+
+@users_router.get(
+    path=r'/chat',
+    summary='ai对话',
+    description='''
+        聊天
+        访问路径：http://localhost:8000/users/chat
+        请求参数；
+            question: 用户问题
+        返回值：
+            流式输出 sse
+    '''
+)
+def chat(question):
+    # 加载模型
+    llm = LLM.chatLLM
+    # 聊天
+    return {
+        'code': 200,
+        'msg': '成功',
+        'data': llm.invoke([
+            {'role': 'user', 'content': question}
+        ]).content,
+    }

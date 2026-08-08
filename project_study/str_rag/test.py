@@ -1,17 +1,4 @@
-import os
-from pathlib import Path
-from docx import Document
-
-
-# a = os.path.dirname(__file__)
-# print(a)
-# print(type(a))
-# b = os.path.dirname(a)
-# print(b)
-#
-# a = 'hello word hello china'
-# print(a.split(' '))
-
-
-a = (1, 2)
-print(a[0])
+a = {}
+a.update({"a": 1})
+a.update({"b": 2})
+print(a)

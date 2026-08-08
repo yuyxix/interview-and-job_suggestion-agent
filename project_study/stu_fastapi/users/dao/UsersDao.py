@@ -1,5 +1,6 @@
 from common import MySQLUtil
 
+
 def check_email(email):
     conn = MySQLUtil.get_mysql_conn()
     cur = conn.cursor()
@@ -13,6 +14,7 @@ def check_email(email):
     MySQLUtil.close_mysql_conn(cur, conn)
     # 返回结果
     return results
+
 
 if __name__ == '__main__':
     print(check_email('3278708004@qq.com'))

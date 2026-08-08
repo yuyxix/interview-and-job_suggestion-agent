@@ -2,6 +2,9 @@
 import uvicorn as uv
 from fastapi import FastAPI
 
+from chat.controller.ChatController import chat_router
+from chat.controller.HistoryController import history_router
+# from register.controller.RegisterController import register_router
 # 导入子路由对象
 from users.controller.UsersController import users_router
 
@@ -33,6 +36,24 @@ app.include_router(
     prefix='/users',  # 配置访问子路由接口的前缀，默认'',推荐写为模块的报名做区分
     tags=['users'] # 配置swaggerUI中的模块名称
 )
+
+app.include_router(
+    router=chat_router,
+    prefix='/chat',
+    tags=['chat'],
+)
+
+app.include_router(
+    router=history_router,
+    prefix='/history',
+    tags=['history'],
+)
+
+# app.include_router(
+#     router=register_router,
+#     prefix='/register',
+#     tags=['register'],
+# )
 
 # 静态资源配置
 from fastapi.staticfiles import StaticFiles

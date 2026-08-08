@@ -1,5 +1,4 @@
 import random
-import time
 from email.mime.text import MIMEText
 from users.dao import UsersDao
 import os
@@ -7,17 +6,19 @@ from common import RedisUtil
 from dotenv import load_dotenv
 import smtplib
 from common.RedisUtil import get_redis_conn
-from users.entity import CheckEntity
 
 load_dotenv()
 
 # 发送邮件
 def send_email(email: str):
     flag = False
+    # 取出当前邮箱号对应的用户名
+    result = UsersDao.check_email(email)
+    username = result[0]['username']
     # 1.验证邮箱号是否输出注册过的用户
     # isinstance(a, b) 返回布尔值， 判定a是否是b的实例
     print(UsersDao.MySQLUtil.get_mysql_conn())
-    if isinstance(UsersDao.check_email(email), list):
+    if isinstance(result, list):
         flag = True
         print(flag)
     # 根据结果判定是否需要发邮件
@@ -70,7 +71,7 @@ def send_email(email: str):
         return {
             'code': 200,
             'msg': '发送成功',
-            'data': code,
+            'data': username,
         }
     except Exception as e:
         print(e)
@@ -109,26 +110,3 @@ def Verification_Module(VerifyCode):
             'data': None,
         }
 
-# def Verification_Module(code):
-#     r = get_redis_conn()
-#     ver_code = r.get(email)
-#     print(ver_code)
-#     print(type(ver_code))
-#     if code == ver_code:
-#         return {
-#             'code': 200,
-#             'msg': '验证成功',
-#             'data': None,
-#         }
-#     elif code != ver_code:
-#         return {
-#             'code': 500,
-#             'msg': '验证码错误，请重试',
-#             'data': None,
-#         }
-#     elif code == None:
-#         return {
-#             'code': 500,
-#             'msg': '验证码已过期，请重新获取',
-#             'data': None,
-#         }

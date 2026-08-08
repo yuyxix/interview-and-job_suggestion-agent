@@ -79,15 +79,27 @@ print(retriever)
 
 # 打印召回结果，对召回结果进行重排序
 def print_doc(docs):
+    print(f'召回的结果有:')
     for doc in docs:
-        print(doc)
+        print(doc.page_content)
     return docs
 
 def Reranker(docs):
+    print('开始进行重排序...')
     rerank_input = [(question, doc.page_content) for doc in docs['context']]
-    print(rerank_input)
     scores = reranker.compute_score(rerank_input)
-    return scores
+    context = [doc.page_content for doc in docs['context']]
+    scores_list = list(zip(scores, context))
+    scores_list.sort(key=lambda x: x[0], reverse=True)
+    score_result = [doc for score, doc in scores_list[:3]]
+    print(score_result)
+    print('重排序的结果为：')
+    for item in range(len(score_result)):
+        print(f'【来源{item+1}】 {score_result[item]}')
+    return {
+        'context': score_result,
+        'question': question
+    }
 
 # 创建langchain链
 qa_chain = (
@@ -98,12 +110,13 @@ qa_chain = (
         }
     )
     | RunnableLambda(Reranker)
-    # | prompt
-    # | chatLLM
-    # | StrOutputParser()
+    | prompt  # 提示词
+    | chatLLM  # 大模型对象
+    | StrOutputParser()  # 把llm输出的结果转为字符串输出
 )
 
 # 测试
-reply = qa_chain.invoke(question)
-print(reply)
-
+if __name__ == '__main__':
+    # qa_chain.invoke(question)
+    reply = qa_chain.invoke(question)
+    print(reply)
