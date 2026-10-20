@@ -1,0 +1,1898 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI 多智能体面试平台</title>
+    <!-- Vue2 CDN -->
+    <script src="https://cdn.jsdelivr.net/npm/vue@2.7.14/dist/vue.js"></script>
+    <!-- Markdown解析库 marked CDN -->
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+</head>
+<body>
+    <div id="app">
+        <div class="workspace">
+            <aside class="sidebar">
+                <div class="brand">
+                    <div class="brand-logo">AI</div>
+                    <div class="brand-copy">
+                        <div class="brand-title">智面 AI</div>
+                        <div class="brand-subtitle">MULTI-AGENT INTERVIEW</div>
+                    </div>
+                </div>
+                <button class="new-chat" type="button" @click="create_session(true)"><span>＋</span><span class="new-chat-label">开启新对话</span></button>
+
+                <!-- 历史记录搜索：按关键词定位到某一条 -->
+                <div class="side-search">
+                    <input v-model.trim="historyKeyword" type="text" placeholder="搜索历史对话…"
+                           @focus="refreshHistoryLines">
+                    <button type="button" title="刷新历史" @click="loadSessions">刷</button>
+                </div>
+                <div class="side-tip" v-if="historyTip">{{ historyTip }}</div>
+
+                <div class="side-heading">
+                    {{ historyKeyword ? '搜索结果' : '最近对话' }}
+                </div>
+                <div class="history-list">
+                    <!-- 搜索结果：输入即检索（本地过滤），每条带 × 可以单独删掉 -->
+                    <template v-if="historyKeyword">
+                        <div v-if="searchResults.length === 0" class="history-empty">没有找到相关记录</div>
+                        <div v-for="m in searchResults" :key="m.document_id || (m.memory_id + '-' + m.index)"
+                             class="history-item" @click="jumpTo(m)" :title="m.text">
+                            <span class="history-icon">{{ m.role === 'user' ? '我' : 'AI' }}</span>
+                            <span class="history-name">{{ m.text }}</span>
+                            <span class="history-del"
+                                  :class="{ danger: pendingDelete === m.document_id }"
+                                  :title="pendingDelete === m.document_id ? '再点一下就是真删' : '删除这一条记录'"
+                                  @click.stop="askDeleteRecord(m)">
+                                {{ pendingDelete === m.document_id ? '确认删' : '×' }}
+                            </span>
+                        </div>
+                    </template>
+                    <!-- 会话列表：每条带 × 可以删掉整段会话 -->
+                    <template v-else>
+                        <div v-if="sessions.length === 0" class="history-empty">还没有历史对话<br>开启一场面试练习吧</div>
+                        <div v-for="session in sessions" :key="session.id" class="history-item" :class="{ active: session.id === currentSessionId }" @click="switchSession(session.id)" :title="session.title">
+                            <span class="history-icon">▤</span>
+                            <span class="history-name">{{ session.title }}</span>
+                            <span class="history-del"
+                                  :class="{ danger: pendingDelete === session.id }"
+                                  :title="pendingDelete === session.id ? '再点一下就是真删' : '删除这段会话'"
+                                  @click.stop="askDeleteSession(session.id)">
+                                {{ pendingDelete === session.id ? '确认删' : '×' }}
+                            </span>
+                        </div>
+                    </template>
+                </div>
+                <div class="sidebar-footer">
+                    <div class="avatar-small">{{ avatarText }}</div>
+                    <div class="footer-copy">
+                        <div class="footer-name">{{ username || '面试练习者' }}</div>
+                        <div class="footer-role">个人工作空间</div>
+                    </div>
+                </div>
+            </aside>
+            <main class="main">
+                <header class="topbar">
+                    <div>
+                        <h1 class="page-title">AI 多智能体面试平台</h1>
+                        <div class="page-subtitle">多角色协同 · 模拟真实面试 · 助力职业成长</div>
+                    </div>
+                    <div class="topbar-actions">
+                        <button v-if="isAdmin" class="admin-btn" type="button" @click="openAdmin">
+                            用户管理
+                        </button>
+                        <button class="profile-btn" type="button" @click="openProfile">我的画像</button>
+                        <button class="logout-btn" type="button" @click="logout">退出登录</button>
+                    </div>
+                </header>
+                <section class="chat-area" ref="chatArea">
+                    <div v-if="currentMessages.length === 0" class="welcome">
+                        <div class="welcome-icon">✦</div>
+                        <h2>准备好开启你的模拟面试了吗？</h2>
+                        <p>从自我介绍到专业追问，多智能体将协同模拟面试官，<br>帮助你发现亮点、梳理思路、提升表达。</p>
+                        <div class="suggestions">
+                            <button class="suggestion" type="button" @click="useSuggestion('请作为技术面试官，开始一场 Python 后端开发模拟面试。')">
+                                <div class="suggestion-title">⌘　技术岗位模拟面试</div>
+                                <div class="suggestion-desc">从 Python、数据库到项目实践，逐步深入提问</div>
+                            </button>
+                            <button class="suggestion" type="button" @click="useSuggestion('请帮我进行一场行为面试，重点练习自我介绍和项目经历。')">
+                                <div class="suggestion-title">◎　行为面试训练</div>
+                                <div class="suggestion-desc">练习自我介绍、项目复盘与沟通表达</div>
+                            </button>
+                            <button class="suggestion" type="button" @click="useSuggestion('请根据 AI 应用开发岗位，向我提出一道面试题，并在我回答后点评。')">
+                                <div class="suggestion-title">✧　AI 应用开发</div>
+                                <div class="suggestion-desc">围绕 RAG、大语言模型与智能体应用展开</div>
+                            </button>
+                            <button class="suggestion" type="button" @click="useSuggestion('请帮我复盘一次面试回答，从内容、逻辑和表达三个方面给出建议。')">
+                                <div class="suggestion-title">↗　回答复盘与提升</div>
+                                <div class="suggestion-desc">分析回答结构，获得清晰可执行的改进建议</div>
+                            </button>
+                        </div>
+                    </div>
+                    <div v-for="(message, index) in currentMessages" :key="message.id || index" class="message-row" :class="message.role">
+                        <div class="message-avatar">{{ message.role === 'user' ? '我' : 'AI' }}</div>
+                        <div class="message-body">
+                            <div class="message-meta">
+                                <strong>{{ message.role === 'user' ? '我' : 'AI 面试助手' }}</strong>
+                                <span>{{ formatTime(message.time) }}</span>
+                            </div>
+                            <div class="bubble" v-if="message.role === 'ai'">
+                                <!-- pending：工作流还在跑，显示带动画的思考提示 -->
+                                <div v-if="message.pending" class="thinking">
+                                    <span>{{ message.status || '正在思考…' }}</span>
+                                    <span class="thinking-dots"><i></i><i></i><i></i></span>
+                                </div>
+                                <div v-else v-html="renderMarkdown(message.content)"></div>
+                            </div>
+                            <div class="bubble" v-else>{{ message.content }}</div>
+                        </div>
+                    </div>
+                </section>
+                <footer class="composer-wrap">
+                    <form class="composer" @submit.prevent="send">
+                        <input type="text" v-model="input" :disabled="isSending" placeholder="输入你的回答，或告诉 AI 你想练习的面试方向…" autocomplete="off">
+                        <button class="voice-btn" type="button" :class="{ recording: isRecording }" @click="toggleVoice" :disabled="isSending" :title="isRecording ? '停止语音输入' : '开始语音输入'">
+                            <span class="voice-icon" aria-hidden="true">
+                                <svg viewBox="0 0 24 24" width="20" height="20" fill="none"
+                                     stroke="currentColor" stroke-width="2" stroke-linecap="round">
+                                    <path d="M4 10v4M8 7v10M12 4v16M16 7v10M20 10v4"></path>
+                                </svg>
+                            </span>
+                        </button>
+                        <button class="send-btn" type="submit" :disabled="!input.trim() || isSending">
+                            <span class="send-icon">➤</span><span>{{ isSending ? '处理中…' : '发送' }}</span>
+                        </button>
+                    </form>
+                    <div class="composer-tip" :class="{ error: voiceTip }">
+                        {{ voiceTip || 'AI 生成内容仅供面试练习参考 · 按 Enter 发送' }}
+                    </div>
+                </footer>
+            </main>
+        </div>
+
+        <!-- 用户画像：查看 + 手动编辑 -->
+        <div v-if="profileModal.open" class="modal-mask" @click.self="closeProfile">
+            <div class="modal-card">
+                <div class="modal-head">
+                    <div>
+                        <h3>我的用户画像</h3>
+                        <p>画像会用于让智面更了解你。</p>
+                    </div>
+                    <button class="modal-close" type="button" @click="closeProfile" title="关闭">×</button>
+                </div>
+
+                <div v-if="profileModal.loading" class="modal-loading">正在加载画像…</div>
+                <template v-else>
+                    <template v-if="profileModal.editing">
+                        <textarea ref="profileEditor" v-model="profileModal.text" class="profile-editor" rows="12"
+                                  placeholder="可以按「维度：内容」的格式填写，例如：&#10;求职目标：Java 后端开发&#10;技能与能力：熟悉 Spring Boot，项目中用过 Redis&#10;提升需求：重点练习算法题"></textarea>
+                        <div class="modal-tip" :class="{ error: profileModal.error }">
+                            {{ profileModal.tip || '保存后会整份覆盖；下一次自动更新会以此为基础继续合并。' }}
+                        </div>
+                    </template>
+                    <template v-else>
+                        <div v-if="profileModal.text.trim()" class="profile-view">{{ profileModal.text }}</div>
+                        <div v-else class="profile-view profile-empty">还不够了解你哦</div>
+                        <div v-if="profileModal.tip" class="modal-tip"
+                             :class="{ error: profileModal.error }">
+                            {{ profileModal.tip }}
+                        </div>
+                    </template>
+                </template>
+
+                <div class="modal-actions">
+                    <template v-if="profileModal.editing">
+                        <button class="ghost-btn" type="button" @click="cancelEditProfile"
+                                :disabled="profileModal.saving">取消编辑</button>
+                        <button class="save-btn" type="button" @click="saveProfile"
+                                :disabled="profileModal.saving || profileModal.loading">
+                            {{ profileModal.saving ? '保存中…' : '保存画像' }}
+                        </button>
+                    </template>
+                    <template v-else>
+                        <button class="ghost-btn" type="button" @click="closeProfile">关闭</button>
+                        <button class="save-btn" type="button" @click="startEditProfile"
+                                :disabled="profileModal.loading || profileModal.saving || profileModal.error">编辑</button>
+                    </template>
+                </div>
+            </div>
+        </div>
+
+        <!-- 管理员：用户管理（只在 admin 角色下显示入口） -->
+        <div v-if="adminPanel.open" class="modal-mask admin-mask" @click.self="closeAdmin">
+            <div class="modal-card admin-card">
+                <div class="modal-head">
+                    <div>
+                        <h3>用户管理</h3>
+                        <p>可查看用户、修改角色、删除用户；用户画像仅可查看，不能修改。</p>
+                    </div>
+                    <button class="modal-close" type="button" @click="closeAdmin" title="关闭">×</button>
+                </div>
+
+                <div class="admin-toolbar">
+                    <input v-model.trim="adminPanel.keyword" type="text" placeholder="搜索用户名或邮箱…">
+                    <button class="ghost-btn" type="button"
+                            :disabled="adminPanel.loading" @click="loadAdminUsers">
+                        {{ adminPanel.loading ? '加载中…' : '刷新' }}
+                    </button>
+                </div>
+                <div class="modal-tip"
+                     :class="{ error: adminPanel.tipType === 'err', ok: adminPanel.tipType === 'ok' }">
+                    {{ adminPanel.tip }}
+                </div>
+
+                <div class="admin-table-wrap">
+                    <table class="admin-table">
+                        <thead>
+                        <tr>
+                            <th>用户 ID</th>
+                            <th>用户名</th>
+                            <th>邮箱</th>
+                            <th>角色</th>
+                            <th>用户画像</th>
+                            <th>操作</th>
+                        </tr>
+                        </thead>
+                        <tbody>
+                        <tr v-if="!adminPanel.loading && filteredAdminUsers.length === 0">
+                            <td colspan="6" class="admin-empty">没有匹配的用户</td>
+                        </tr>
+                        <tr v-for="u in filteredAdminUsers" :key="u.user_id">
+                            <td class="admin-mono">{{ u.user_id }}</td>
+                            <td class="admin-name">{{ u.user_name }}</td>
+                            <td>{{ u.email || '-' }}</td>
+                            <td>
+                                <span class="admin-role" :class="u.role_name">{{ u.role_name }}</span>
+                            </td>
+                            <td>
+                                <span v-if="u.profile" class="has-profile">有画像</span>
+                                <span v-else class="no-profile">暂无</span>
+                                <button class="admin-link" type="button"
+                                        @click="viewAdminProfile(u)">查看</button>
+                            </td>
+                            <td class="admin-ops">
+                                <select v-model="u.role_name"
+                                        :disabled="u.user_name === username"
+                                        @change="adminChangeRole(u)">
+                                    <option value="user">user</option>
+                                    <option value="admin">admin</option>
+                                </select>
+                                <button v-if="u.user_name !== username"
+                                        class="admin-danger" type="button"
+                                        @click="adminAskDelete(u)">
+                                    {{ adminPanel.pendingDelete === u.user_id ? '确认删除' : '删除' }}
+                                </button>
+                                <span v-else class="admin-self">当前账号</span>
+                            </td>
+                        </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <!-- 管理员查看用户画像：只读 -->
+        <div v-if="adminProfileModal.open" class="modal-mask admin-profile-mask"
+             @click.self="closeAdminProfile">
+            <div class="modal-card">
+                <div class="modal-head">
+                    <div>
+                        <h3>用户画像 · {{ adminProfileModal.userName }}</h3>
+                        <p>只读视图，管理员不能修改。</p>
+                    </div>
+                    <button class="modal-close" type="button" @click="closeAdminProfile" title="关闭">×</button>
+                </div>
+                <pre class="profile-view">{{ adminProfileModal.text || '该用户暂无画像' }}</pre>
+                <div class="modal-actions">
+                    <button class="ghost-btn" type="button" @click="closeAdminProfile">关闭</button>
+                </div>
+            </div>
+        </div>
+    </div>
+    <script>
+        new Vue({
+            el: '#app',  //绑定html元素
+            data: { //定义数据的变量
+                chatList: [], //聊天内容
+                input: "", //输入内容
+                userId: "", //用户id
+                username: "", //用户名（从 token 里解出来，仅用于显示）
+                roleName: "", //角色：admin / user（从 token 里解出来）
+                sessions: [], //历史对话列表
+                currentSessionId: null, //当前对话id
+                isSending: false, //是否正在接收AI回复
+                isRecording: false, //是否正在语音识别
+                eventSource: null, //当前SSE连接
+                messageId: 0, //消息id
+                ws: null, // WebSocket连接
+                voiceTip: '', // 语音相关提示（麦克风权限/连接失败等）
+                voiceTipTimer: null,
+                mediaStream: null, // 麦克风媒体流
+                audioContext: null,
+                sourceNode: null,
+                processorNode: null,
+                session_id: null, // 会话id
+                historyKeyword: '', // 历史搜索关键词
+                historyLines: [],   // 全量历史原始数据（本地实时搜索用）
+                searchResults: [],  // 搜索结果（每条带 index / document_id）
+                historyTip: '',     // 历史相关的一句提示
+                pendingDelete: null, // 正在等第二次确认的删除目标（代替 confirm() 弹窗）
+                statusTimer: null,  // 思考提示的阶段文案定时器
+                // 用户画像弹窗：open 控制显示，text 是编辑中的整份画像
+                profileModal: {
+                    open: false,
+                    loading: false,
+                    saving: false,
+                    editing: false,      // 默认只读，点「编辑」后才可修改
+                    text: '',
+                    originalText: '',    // 取消编辑时恢复用
+                    tip: '',
+                    error: false
+                },
+                // 管理员用户管理弹窗（仅 admin 角色可见）
+                adminPanel: {
+                    open: false,
+                    loading: false,
+                    users: [],
+                    keyword: '',
+                    tip: '',
+                    tipType: 'info',
+                    pendingDelete: null
+                },
+                // 管理员查看用户画像：只读
+                adminProfileModal: {
+                    open: false,
+                    userName: '',
+                    text: ''
+                }
+            },
+            computed: {
+                currentSession() {
+                    return this.sessions.find(item => item.id === this.currentSessionId) || null;
+                },
+                currentMessages() {
+                    return this.currentSession ? this.currentSession.messages : [];
+                },
+                // 用户头像：用户名首字母（英文转大写）/ 中文取第一个字
+                avatarText() {
+                    const name = (this.username || '').trim();
+                    if (!name) return 'U';
+                    // Array.from 而不是 charAt：中文/emoji 也能正确取第一个字符
+                    return Array.from(name)[0].toUpperCase();
+                },
+                isAdmin() {
+                    return this.roleName === 'admin';
+                },
+                filteredAdminUsers() {
+                    const kw = this.adminPanel.keyword.trim().toLowerCase();
+                    if (!kw) return this.adminPanel.users;
+                    return this.adminPanel.users.filter((u) =>
+                        String(u.user_name || '').toLowerCase().includes(kw) ||
+                        String(u.email || '').toLowerCase().includes(kw)
+                    );
+                }
+            },
+            watch: {
+                // 输入即检索：每敲一个字都在本地过滤一次，不发请求
+                historyKeyword() {
+                    this.applyHistorySearch();
+                }
+            },
+            mounted() {
+                // 导航守卫：没有 token 直接踢回登录页
+                //   用 replace 而不是直接赋值 href —— 别让浏览器的"后退"能回到这个页面
+                if (!sessionStorage.getItem('token')) {
+                    location.replace('/static/login.html');
+                    return;
+                }
+                // user_id 从 sessionStorage 取：记忆按 (user_id, memory_id) 隔离，
+                // 空的会被后端拒绝写入（空值会让所有用户混在一起）
+                this.userId = sessionStorage.getItem('user_id') || '';
+                // 用户名 / 角色只用于显示和菜单权限，不落盘 —— 每次从 token 里解
+                const payload = this.decodeToken(sessionStorage.getItem('token') || '');
+                // JWT 过期后角色信息还在，但管理接口会返回 Invalid token，
+                // 所以进页面时先检查 exp，过期就直接回登录页。
+                if (payload.exp && payload.exp * 1000 <= Date.now()) {
+                    sessionStorage.removeItem('token');
+                    sessionStorage.removeItem('user_id');
+                    sessionStorage.removeItem('session_id');
+                    location.replace('/static/login.html');
+                    return;
+                }
+                this.username = payload.username || '';
+                this.roleName = payload.role_name || 'user';
+                this.create_session();
+                // 顺手拉一次服务端历史，把侧边栏填上
+                this.loadSessions();
+                // 刷新/关闭页面时通知后端取消当前会话任务并释放会话锁
+                window.addEventListener('pagehide', this.handlePageHide);
+                window.addEventListener('beforeunload', this.handlePageHide);
+            },
+            beforeDestroy() {
+                window.removeEventListener('pagehide', this.handlePageHide);
+                window.removeEventListener('beforeunload', this.handlePageHide);
+                if (this.eventSource) this.eventSource.close();
+                this.stopVoice();
+            },
+            methods: {
+                // 从 JWT 里解出 payload —— 只用于显示（头像 / 用户名），不做校验
+                decodeToken(token) {
+                    try {
+                        const b64 = token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/');
+                        const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+                        return JSON.parse(new TextDecoder().decode(bytes));
+                    } catch (e) {
+                        return {};
+                    }
+                },
+                // 通知后端取消当前会话任务并释放会话锁
+                cancelSession(sessionId) {
+                    const sid = String(sessionId || '');
+                    // 本地临时 id 不是服务端会话 id，不需要通知
+                    if (!sid.startsWith('session')) return;
+                    const url = '/chat/cancel?user_id=' + encodeURIComponent(this.userId)
+                              + '&session_id=' + encodeURIComponent(sid);
+                    if (navigator.sendBeacon) {
+                        navigator.sendBeacon(url);
+                    } else {
+                        fetch(url, { method: 'POST', keepalive: true }).catch(() => {});
+                    }
+                },
+                handlePageHide() {
+                    this.cancelSession(this.currentSessionId);
+                },
+                // 退出登录：直接删除 token → 再通过 URL 进 chat 会被导航守卫踢回登录页
+                logout() {
+                    this.cancelSession(this.currentSessionId);
+                    if (this.eventSource) {
+                        this.eventSource.close();
+                        this.eventSource = null;
+                    }
+                    if (this.ws) {
+                        this.ws.close();
+                        this.ws = null;
+                    }
+                    sessionStorage.removeItem('token');
+                    sessionStorage.removeItem('user_id');
+                    sessionStorage.removeItem('session_id');
+                    location.replace('/static/login.html');
+                },
+
+                // ==================== 管理员：用户管理 ====================
+                // 管理接口要求 Authorization: Bearer <token>，单独包一个请求帮手
+                async adminApi(url, options = {}) {
+                    const token = sessionStorage.getItem('token') || '';
+                    const headers = Object.assign({}, options.headers || {}, {
+                        'Authorization': 'Bearer ' + token
+                    });
+                    try {
+                        const res = await fetch(url, Object.assign({}, options, { headers }));
+                        const data = await res.json().catch(() => null);
+                        if (!data) {
+                            return { code: res.status, msg: 'HTTP ' + res.status, data: null };
+                        }
+                        // FastAPI 权限失败返回 {detail: ...}，统一成 {code, msg}
+                        if (data.code === undefined) {
+                            if (res.status === 401) {
+                                this.adminPanel.tipType = 'err';
+                                this.adminPanel.tip = '登录已过期，请重新登录';
+                                setTimeout(() => this.logout(), 1200);
+                            }
+                            return {
+                                code: res.status,
+                                msg: data.detail || data.msg || ('HTTP ' + res.status),
+                                data: data
+                            };
+                        }
+                        return data;
+                    } catch (e) {
+                        return { code: 500, msg: '请求失败：' + e.message, data: null };
+                    }
+                },
+                openAdmin() {
+                    if (!this.isAdmin) return;
+                    this.adminPanel.open = true;
+                    this.adminPanel.tip = '';
+                    this.adminPanel.tipType = 'info';
+                    this.loadAdminUsers();
+                },
+                closeAdmin() {
+                    this.adminPanel.open = false;
+                    this.adminPanel.pendingDelete = null;
+                },
+                async loadAdminUsers() {
+                    this.adminPanel.loading = true;
+                    this.adminPanel.tip = '';
+                    const res = await this.adminApi('/admin/profiles');
+                    this.adminPanel.loading = false;
+
+                    if (res.code === 401) {
+                        this.adminPanel.tipType = 'err';
+                        this.adminPanel.tip = '登录已过期，请重新登录';
+                        return;
+                    }
+                    if (res.code === 403) {
+                        this.adminPanel.tipType = 'err';
+                        this.adminPanel.tip = '当前账号没有管理员权限';
+                        return;
+                    }
+                    if (res.code !== 200) {
+                        this.adminPanel.tipType = 'err';
+                        this.adminPanel.tip = res.msg || '加载用户列表失败';
+                        return;
+                    }
+                    this.adminPanel.users = (res.data || []).map((u) => Object.assign({}, u, {
+                        // 记录已保存的角色，修改失败时回滚下拉框
+                        _role: u.role_name
+                    }));
+                },
+                async adminChangeRole(u) {
+                    if (u.role_name === u._role) return;
+                    const res = await this.adminApi('/admin/change_role', {
+                        method: 'PUT',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            username: u.user_name,
+                            role_name: u.role_name
+                        })
+                    });
+                    if (res.code !== 200) {
+                        u.role_name = u._role;
+                        this.adminPanel.tipType = 'err';
+                        this.adminPanel.tip = res.msg || '修改角色失败';
+                        return;
+                    }
+                    u._role = u.role_name;
+                    this.adminPanel.tipType = 'ok';
+                    this.adminPanel.tip = `已把 ${u.user_name} 的角色改为 ${u.role_name}（该用户需重新登录生效）`;
+                },
+                adminAskDelete(u) {
+                    if (this.adminPanel.pendingDelete !== u.user_id) {
+                        this.adminPanel.pendingDelete = u.user_id;
+                        this.adminPanel.tipType = 'info';
+                        this.adminPanel.tip = '再点一下「确认删除」就会真的删除该用户及其所有记忆';
+                        setTimeout(() => {
+                            if (this.adminPanel.pendingDelete === u.user_id) {
+                                this.adminPanel.pendingDelete = null;
+                            }
+                        }, 4000);
+                        return;
+                    }
+                    this.adminPanel.pendingDelete = null;
+                    this.adminDeleteUser(u);
+                },
+                async adminDeleteUser(u) {
+                    const res = await this.adminApi(
+                        '/admin/delete_user/' + encodeURIComponent(u.user_name),
+                        { method: 'POST' }
+                    );
+                    if (res.code !== 200) {
+                        this.adminPanel.tipType = 'err';
+                        this.adminPanel.tip = res.msg || '删除失败';
+                        return;
+                    }
+                    this.adminPanel.users = this.adminPanel.users.filter(
+                        (x) => x.user_id !== u.user_id
+                    );
+                    this.adminPanel.tipType = 'ok';
+                    this.adminPanel.tip = `已删除用户 ${u.user_name} 及其记忆数据`;
+                },
+                viewAdminProfile(u) {
+                    this.adminProfileModal.open = true;
+                    this.adminProfileModal.userName = u.user_name || ('用户 ' + u.user_id);
+                    this.adminProfileModal.text = u.profile || '';
+                },
+                closeAdminProfile() {
+                    this.adminProfileModal.open = false;
+                },
+
+                // ==================== 历史记录（对接后端那几个记忆接口）====================
+                // 统一的请求帮手：后端返回的都是 {code, msg, data}
+                async api(url, options) {
+                    try {
+                        const res = await fetch(url, options);
+                        const data = await res.json().catch(() => null);
+                        return data || { code: 500, msg: '服务端没有返回内容', data: null };
+                    } catch (e) {
+                        return { code: 500, msg: '请求失败：' + e.message, data: null };
+                    }
+                },
+                // 只刷新本地搜索用的历史数据，不动当前会话和聊天区
+                async refreshHistoryLines() {
+                    const res = await this.api('/get_history?user_id=' + encodeURIComponent(this.userId));
+                    if (res.code !== 200) return;
+                    this.historyLines = res.data || [];
+                    if (this.historyKeyword) this.applyHistorySearch();
+                },
+                // 拉该用户全部历史对话，按 memory_id 分组，铺成侧边栏的"会话列表"
+                async loadSessions() {
+                    this.historyTip = '';
+                    const res = await this.api('/get_history?user_id=' + encodeURIComponent(this.userId));
+                    if (res.code !== 200) {
+                        this.historyTip = res.msg || '历史加载失败';
+                        return;
+                    }
+                    // 后端返回 [{content, memory_id, document_id}, ...]
+                    // 留一份在本地，输入时直接过滤，不用每次敲字都请求后端
+                    const lines = res.data || [];
+                    this.historyLines = lines;
+
+                    const groups = {};
+                    lines.forEach((item) => {
+                        const mid = item.memory_id || 'unknown';
+                        (groups[mid] = groups[mid] || []).push(item.content);
+                    });
+                    const serverSessions = Object.keys(groups).map((mid) => ({
+                        id: mid,                    // 直接用服务端会话 id 当本地 id
+                        title: this.titleOf(groups[mid][0]) || '（空会话）',
+                        messages: [],               // 点开时才去拉完整对话
+                        fromServer: true,
+                        count: groups[mid].length
+                    }));
+
+                    // ★ 刷新列表时保留当前会话已加载的消息：
+                    //   只重建列表对象的话，当前会话的 messages 会被清空，
+                    //   聊天区会突然变成空白。
+                    const currentId = this.currentSessionId;
+                    const localNew = this.sessions.find(
+                        (s) => s.id === currentId && !s.fromServer
+                    );
+                    const loaded = this.sessions.find(
+                        (s) => s.id === currentId && s.fromServer
+                            && s.messages && s.messages.length
+                    );
+
+                    let next = serverSessions.map((s) => {
+                        if (loaded && s.id === currentId) {
+                            return Object.assign({}, s, { messages: loaded.messages });
+                        }
+                        return s;
+                    });
+                    if (localNew && !next.some((s) => s.id === localNew.id)) {
+                        next = [localNew, ...next];
+                    }
+                    this.sessions = next;
+
+                    // 正在搜索时，刷新完重新过滤
+                    if (this.historyKeyword) this.applyHistorySearch();
+                },
+                // 把 'user: 你好' 这种一行解析成 {role, content}
+                parseLine(line) {
+                    const idx = line.indexOf(':');
+                    const role = line.slice(0, idx).trim();
+                    return {
+                        id: ++this.messageId,
+                        role: role === 'user' ? 'user' : 'ai',
+                        content: line.slice(idx + 1).trim(),
+                        time: null      // 记忆里暂时没存时间戳，时间显示为空
+                    };
+                },
+                titleOf(line) {
+                    const s = (line || '').replace(/^(user|ai)\s*:\s*/, '');
+                    return s.length > 18 ? s.slice(0, 18) + '…' : s;
+                },
+                // 输入即检索：直接在本地全量历史里过滤（每敲一个字都会触发）
+                applyHistorySearch() {
+                    const kw = this.historyKeyword.trim().toLowerCase();
+                    if (!kw) {
+                        this.searchResults = [];
+                        return;
+                    }
+                    const results = [];
+                    const counters = {};
+                    this.historyLines.forEach((item) => {
+                        const mid = item.memory_id || 'unknown';
+                        const index = counters[mid] || 0;
+                        counters[mid] = index + 1;
+
+                        const content = item.content || '';
+                        if (!content.toLowerCase().includes(kw)) return;
+
+                        const pos = content.indexOf(':');
+                        const role = (pos >= 0 ? content.slice(0, pos) : '').trim();
+                        results.push({
+                            memory_id: mid,
+                            index: index,
+                            document_id: item.document_id,
+                            role: role === 'user' ? 'user' : 'ai',
+                            content: content,
+                            // 展示时去掉 'user:' / 'ai:' 前缀
+                            text: pos >= 0 ? content.slice(pos + 1).trim() : content
+                        });
+                    });
+                    this.searchResults = results;
+                },
+                // 点搜索结果 → 打开那段会话并滚到那一条
+                async jumpTo(m) {
+                    this.searchResults = [];
+                    this.historyKeyword = '';
+                    await this.openServerSession(m.memory_id, m.index, m.text);
+                },
+                // 打开服务端会话；给了 highlightText 就把命中的那一条高亮出来
+                async openServerSession(memoryId, highlightIndex, highlightText) {
+                    const res = await this.api('/history/session?user_id=' + encodeURIComponent(this.userId)
+                                             + '&memory_id=' + encodeURIComponent(memoryId));
+                    if (res.code !== 200) return (this.historyTip = res.msg || '加载失败');
+                    const lines = res.data || [];
+                    const messages = lines.map((line) => this.parseLine(line));
+
+                    let session = this.sessions.find((s) => s.id === memoryId);
+                    if (!session) {
+                        session = { id: memoryId, title: this.titleOf(lines[0]), messages: [] };
+                        this.sessions.push(session);
+                    }
+                    session.messages = messages;
+                    this.currentSessionId = memoryId;
+                    this.chatList = session.messages;
+                    this.historyTip = '';
+                    this.$nextTick(() => {
+                        this.scrollToBottom();
+                        let target = highlightIndex;
+                        // 本地分组顺序和服务端返回顺序理论上一致；
+                        // 对不上（或没给 index）时按内容兜底
+                        if (target === undefined || target === null) {
+                            target = highlightText
+                                ? messages.findIndex((m) => m.content === highlightText)
+                                : -1;
+                        } else if (!messages[target]
+                                || (highlightText && messages[target].content !== highlightText)) {
+                            target = highlightText
+                                ? messages.findIndex((m) => m.content === highlightText)
+                                : -1;
+                        }
+                        if (target !== undefined && target !== null && target >= 0) {
+                            this.highlight(target);
+                        }
+                    });
+                },
+                // 滚到第 index 条并闪一下
+                highlight(index) {
+                    const area = this.$refs.chatArea;
+                    if (!area) return;
+                    const rows = area.querySelectorAll('.message-row');
+                    const row = rows[index];
+                    if (!row) return;
+                    row.scrollIntoView({ block: 'center', behavior: 'smooth' });
+                    row.classList.add('flash');
+                    setTimeout(() => row.classList.remove('flash'), 1500);
+                },
+                // 删会话：第一下只是问，第二下才真删
+                // 不用 confirm() —— 浏览器连续弹几次对话框后会自动屏蔽它，
+                // 之后 confirm() 永远返回 false，点了就完全没反应（这就是"点不了"）
+                askDeleteSession(memoryId) {
+                    if (this.pendingDelete !== memoryId) {
+                        this.pendingDelete = memoryId;
+                        // 4 秒内没再点就自动撤销
+                        setTimeout(() => {
+                            if (this.pendingDelete === memoryId) this.pendingDelete = null;
+                        }, 4000);
+                        return;
+                    }
+                    this.pendingDelete = null;
+                    this.deleteSession(memoryId);
+                },
+                // 真正删会话（后端把 Chroma / Redis / PG / checkpoint 四处一起清）
+                async deleteSession(memoryId) {
+                    const res = await this.api('/history/session?user_id=' + encodeURIComponent(this.userId)
+                                             + '&memory_id=' + encodeURIComponent(memoryId),
+                                             { method: 'DELETE' });
+                    this.historyTip = res.msg || (res.code === 200 ? '已删除' : '删除失败');
+                    this.sessions = this.sessions.filter((s) => s.id !== memoryId);
+                    if (this.currentSessionId === memoryId) this.create_session(true);
+                    this.loadSessions();
+                },
+                // 删搜索命中的那一条：同样两步
+                askDeleteRecord(m) {
+                    if (this.pendingDelete !== m.document_id) {
+                        this.pendingDelete = m.document_id;
+                        setTimeout(() => {
+                            if (this.pendingDelete === m.document_id) this.pendingDelete = null;
+                        }, 4000);
+                        return;
+                    }
+                    this.pendingDelete = null;
+                    this.deleteRecord(m);
+                },
+                // 真删单条（用 document_id 精确删）
+                async deleteRecord(m) {
+                    const res = await this.api('/history/message?user_id=' + encodeURIComponent(this.userId)
+                                             + '&memory_id=' + encodeURIComponent(m.memory_id)
+                                             + '&document_id=' + encodeURIComponent(m.document_id),
+                                             { method: 'DELETE' });
+                    this.historyTip = res.msg || (res.code === 200 ? '已删除该条' : '删除失败');
+                    // 本地缓存也同步移除，避免搜到刚删掉的内容
+                    this.historyLines = this.historyLines.filter((x) => x.document_id !== m.document_id);
+                    this.searchResults = this.searchResults.filter((x) => x.document_id !== m.document_id);
+                },
+
+                // ==================== 用户画像 ====================
+                // 打开弹窗并拉取服务端保存的画像（按 user_id 存，跨会话共用）
+                async openProfile() {
+                    this.profileModal.open = true;
+                    this.profileModal.loading = true;
+                    this.profileModal.saving = false;
+                    this.profileModal.editing = false;
+                    this.profileModal.error = false;
+                    this.profileModal.tip = '';
+                    this.profileModal.text = '';
+                    this.profileModal.originalText = '';
+
+                    const res = await this.api('/profile?user_id=' + encodeURIComponent(this.userId));
+                    this.profileModal.loading = false;
+                    if (res.code !== 200) {
+                        this.profileModal.error = true;
+                        this.profileModal.tip = res.msg || '画像加载失败';
+                        return;
+                    }
+                    this.profileModal.text = (res.data && res.data.profile) || '';
+                    this.profileModal.originalText = this.profileModal.text;
+                },
+                // 默认只读，点「编辑」才进入可编辑状态
+                startEditProfile() {
+                    if (this.profileModal.loading || this.profileModal.saving) return;
+                    this.profileModal.originalText = this.profileModal.text;
+                    this.profileModal.editing = true;
+                    this.profileModal.error = false;
+                    this.profileModal.tip = '';
+                    this.$nextTick(() => {
+                        const el = this.$refs.profileEditor;
+                        if (el && el.focus) el.focus();
+                    });
+                },
+                // 取消编辑：恢复成打开弹窗时的内容，并回到只读
+                cancelEditProfile() {
+                    if (this.profileModal.saving) return;
+                    this.profileModal.text = this.profileModal.originalText;
+                    this.profileModal.editing = false;
+                    this.profileModal.error = false;
+                    this.profileModal.tip = '';
+                },
+                closeProfile() {
+                    // 保存中不让关，避免请求还在飞的时候界面状态丢掉
+                    if (this.profileModal.saving) return;
+                    this.profileModal.open = false;
+                    this.profileModal.editing = false;
+                },
+                // 手动保存：整份覆盖（下一次自动更新会以它为基础继续合并）
+                async saveProfile() {
+                    if (this.profileModal.saving || this.profileModal.loading) return;
+                    if (!this.userId) {
+                        this.profileModal.error = true;
+                        this.profileModal.tip = '缺少用户信息，请重新登录';
+                        return;
+                    }
+                    this.profileModal.saving = true;
+                    this.profileModal.error = false;
+                    this.profileModal.tip = '';
+
+                    const res = await this.api('/profile', {
+                        method: 'PUT',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            user_id: this.userId,
+                            profile: this.profileModal.text
+                        })
+                    });
+                    this.profileModal.saving = false;
+                    if (res.code !== 200) {
+                        this.profileModal.error = true;
+                        this.profileModal.tip = res.msg || '保存失败';
+                        return;
+                    }
+
+                    this.profileModal.text = (res.data && res.data.profile !== undefined)
+                        ? res.data.profile
+                        : this.profileModal.text;
+                    this.profileModal.originalText = this.profileModal.text;
+                    this.profileModal.editing = false;
+                    this.profileModal.tip = '已保存';
+                },
+
+                // ==================== 会话 / 聊天 ====================
+                // forceNew=true：用户主动点"开启新对话"
+                // forceNew=false：进页面时恢复上次会话（带上 sessionStorage 里的 id）
+                create_session(forceNew = false) {
+                    // 新建对话前先通知后端取消当前会话，释放可能还占着的锁
+                    this.cancelSession(this.currentSessionId);
+                    // 新建对话前关闭旧的SSE连接，避免旧消息写入新对话
+                    if (this.eventSource) {
+                        this.eventSource.close();
+                        this.eventSource = null;
+                    }
+                    this.cancelPendingMessages();
+                    this.isSending = false;
+                    const session = {
+                        id: Date.now() + Math.random(),   // 临时 id，后端返回后会被换成服务端会话 id
+                        title: '新对话',
+                        messages: []
+                    };
+                    this.sessions.unshift(session);
+                    this.currentSessionId = session.id;
+                    this.chatList = session.messages; // 保留原有聊天列表变量
+                    this.input = "";
+                    this.$nextTick(this.scrollToBottom);
+
+                    // 构造参数
+                    const params = {
+                        'user_id': this.userId,
+                    };
+                    // ★ 主动新建时不带旧 session_id —— 带上后端会认为要恢复旧会话，
+                    //   直接把旧 id 原样返回，侧边栏就会出现两个相同 id 的会话（重复 key），
+                    //   历史列表的点击也会随之失效。
+                    const session_id = forceNew ? null : sessionStorage.getItem('session_id');
+                    if (session_id) {
+                        params.session_id = session_id;
+                    }
+                    // 发送ajax请求
+                    return fetch(
+                        '/create_session',
+                        {   // 请求方式
+                            method: 'POST',
+                            headers: { //post请求下的参数数据格式
+                                'Content-Type': 'application/json'
+                            },
+                            body: JSON.stringify(params), // 请求体
+                        }
+                    ).then(res => res.json()).then(res => {
+                        const data = res.data || {};
+                        if (!data.session_id) {
+                            console.warn('创建会话失败：', res);
+                            return;
+                        }
+                        // 存入会话
+                        sessionStorage.setItem('session_id', data.session_id);
+
+                        // 防御：万一服务端仍返回了已存在的 id，不要再保留本地空壳，
+                        // 否则 v-for 会出现重复 key
+                        const duplicate = this.sessions.find(
+                            (s) => s !== session && s.id === data.session_id
+                        );
+                        if (duplicate) {
+                            this.sessions = this.sessions.filter((s) => s !== session);
+                            this.currentSessionId = duplicate.id;
+                            this.chatList = duplicate.messages || [];
+                            return;
+                        }
+
+                        // 关键：把本地临时 id 换成服务端会话 id，
+                        // 这样侧边栏、currentSessionId、发给后端的 session_id 是同一个值，
+                        // /chat 的 thread_id 也就和服务端会话对上了
+                        session.id = data.session_id;
+                        this.currentSessionId = session.id;
+                    })
+                },
+                switchSession(sessionId) {
+                    // 切换前先取消当前会话任务，避免旧 run 占着会话锁
+                    this.cancelSession(this.currentSessionId);
+                    // 切换历史对话
+                    if (this.eventSource) {
+                        this.eventSource.close();
+                        this.eventSource = null;
+                    }
+                    this.cancelPendingMessages();
+                    this.isSending = false;
+                    // 服务端来的会话还没拉过完整对话 → 现去后端拉
+                    const target = this.sessions.find((s) => s.id === sessionId);
+                    if (target && target.fromServer && (!target.messages || target.messages.length === 0)) {
+                        this.openServerSession(sessionId);
+                        return;
+                    }
+                    this.currentSessionId = sessionId;
+                    this.chatList = this.currentMessages;
+                    this.input = "";
+                    this.$nextTick(this.scrollToBottom);
+                },
+                useSuggestion(text) {
+                    this.input = text;
+                    this.send();
+                },
+                // 语音输入：浏览器采集麦克风 → 16k 单声道 PCM → WebSocket 发给 Vosk
+                toggleVoice() {
+                    if (this.isRecording) {
+                        this.stopVoice();
+                    } else {
+                        this.startVoice();
+                    }
+                },
+                async startVoice() {
+                    if (this.ws || this.isRecording) return;
+                    this.voiceTip = '';
+
+                    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+                        this.showVoiceTip('当前浏览器不支持麦克风录音');
+                        return;
+                    }
+
+                    try {
+                        this.mediaStream = await navigator.mediaDevices.getUserMedia({
+                            audio: {
+                                channelCount: 1,
+                                echoCancellation: true,
+                                noiseSuppression: true,
+                                autoGainControl: true
+                            }
+                        });
+                    } catch (e) {
+                        this.showVoiceTip('无法访问麦克风：' + (e.message || e.name));
+                        return;
+                    }
+
+                    const protocol = location.protocol === 'https:' ? 'wss://' : 'ws://';
+                    const ws = new WebSocket(`${protocol}${location.host}/vosk`);
+                    this.ws = ws;
+                    ws.binaryType = 'arraybuffer';
+
+                    ws.onopen = () => {
+                        if (this.ws !== ws) return;
+                        this.isRecording = true;
+                        this.startAudioCapture();
+                    };
+                    ws.onmessage = (e) => {
+                        // 已经收尾（收到 final / 手动停止）之后，忽略残余消息
+                        if (this.ws !== ws) return;
+                        let data;
+                        try {
+                            data = JSON.parse(e.data);
+                        } catch (err) {
+                            data = { type: 'final', text: e.data };
+                        }
+                        if (data.type === 'partial') {
+                            // 实时把识别中的文字填进输入框
+                            if (data.text) this.input = data.text;
+                            return;
+                        }
+                        if (data.type === 'final') {
+                            const text = (data.text || '').trim();
+                            if (text) {
+                                this.input = text;
+                                this.stopVoice();
+                                this.send();
+                            }
+                            return;
+                        }
+                        if (data.type === 'error') {
+                            this.showVoiceTip(data.message || '语音识别失败');
+                            this.stopVoice();
+                        }
+                    };
+                    ws.onerror = () => {
+                        this.showVoiceTip('语音连接失败，请稍后重试');
+                        this.stopVoice();
+                    };
+                    ws.onclose = () => {
+                        // stopVoice() 会先把 this.ws 置空，再关闭连接；
+                        // 所以 this.ws !== ws 说明是主动收尾，不弹错误提示
+                        const intentional = this.ws !== ws;
+                        if (this.ws === ws) this.ws = null;
+                        this.isRecording = false;
+                        if (!intentional && !this.voiceTip) {
+                            this.showVoiceTip('语音连接已断开');
+                        }
+                    };
+                },
+                // 采集麦克风并转成 16kHz / 单声道 / Int16 PCM
+                startAudioCapture() {
+                    try {
+                        this.audioContext = new (window.AudioContext || window.webkitAudioContext)({
+                            sampleRate: 16000
+                        });
+                    } catch (e) {
+                        // 个别浏览器不支持指定采样率，退回默认值，发送前再重采样
+                        this.audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                    }
+
+                    if (this.audioContext.state === 'suspended') {
+                        this.audioContext.resume().catch(() => {});
+                    }
+
+                    const source = this.audioContext.createMediaStreamSource(this.mediaStream);
+                    const processor = this.audioContext.createScriptProcessor(4096, 1, 1);
+                    const inRate = this.audioContext.sampleRate;
+                    const outRate = 16000;
+
+                    processor.onaudioprocess = (e) => {
+                        // 不要把麦克风声音从扬声器放出来，否则会回音
+                        e.outputBuffer.getChannelData(0).fill(0);
+
+                        if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
+                        const input = e.inputBuffer.getChannelData(0);
+                        const samples = inRate === outRate
+                            ? input
+                            : this.resample(input, inRate, outRate);
+
+                        const pcm = new Int16Array(samples.length);
+                        for (let i = 0; i < samples.length; i++) {
+                            const s = Math.max(-1, Math.min(1, samples[i]));
+                            pcm[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+                        }
+                        try {
+                            this.ws.send(pcm.buffer);
+                        } catch (err) {
+                            // 连接刚好断开时忽略这一帧
+                        }
+                    };
+
+                    source.connect(processor);
+                    // 接到 destination 才会持续触发 onaudioprocess；输出的是静音
+                    processor.connect(this.audioContext.destination);
+                    this.sourceNode = source;
+                    this.processorNode = processor;
+                },
+                // 线性重采样：浏览器不一定接受 16000 的采样率
+                resample(input, inRate, outRate) {
+                    const ratio = inRate / outRate;
+                    const length = Math.round(input.length / ratio);
+                    const output = new Float32Array(length);
+                    for (let i = 0; i < length; i++) {
+                        const pos = i * ratio;
+                        const i0 = Math.floor(pos);
+                        const i1 = Math.min(i0 + 1, input.length - 1);
+                        const frac = pos - i0;
+                        output[i] = input[i0] * (1 - frac) + input[i1] * frac;
+                    }
+                    return output;
+                },
+                // 停止语音识别：断开音频采集 + 关闭 WebSocket
+                stopVoice() {
+                    this.isRecording = false;
+
+                    if (this.processorNode) {
+                        this.processorNode.onaudioprocess = null;
+                        this.processorNode.disconnect();
+                        this.processorNode = null;
+                    }
+                    if (this.sourceNode) {
+                        this.sourceNode.disconnect();
+                        this.sourceNode = null;
+                    }
+                    if (this.audioContext) {
+                        this.audioContext.close().catch(() => {});
+                        this.audioContext = null;
+                    }
+                    if (this.mediaStream) {
+                        this.mediaStream.getTracks().forEach((track) => track.stop());
+                        this.mediaStream = null;
+                    }
+                    if (this.ws) {
+                        const ws = this.ws;
+                        this.ws = null;
+                        try { ws.close(); } catch (e) {}
+                    }
+                },
+                showVoiceTip(text) {
+                    this.voiceTip = text;
+                    clearTimeout(this.voiceTipTimer);
+                    this.voiceTipTimer = setTimeout(() => {
+                        this.voiceTip = '';
+                    }, 5000);
+                },
+                // 停止"正在思考"阶段文案的定时器
+                stopStatusTimer() {
+                    if (this.statusTimer) {
+                        clearInterval(this.statusTimer);
+                        this.statusTimer = null;
+                    }
+                },
+                // 切换/新建会话时，把还在等待回复的气泡标记为中断，
+                // 避免 SSE 被关掉后思考动画一直转
+                cancelPendingMessages() {
+                    this.stopStatusTimer();
+                    (this.sessions || []).forEach((s) => {
+                        (s.messages || []).forEach((m) => {
+                            if (m.pending) {
+                                m.pending = false;
+                                m.status = '';
+                                if (!m.content) m.content = '（回答已中断）';
+                            }
+                        });
+                    });
+                },
+                // 发送函数
+                send() {
+                    // 问题不能为空
+                    if (this.input.trim() === "" || this.isSending) {
+                        return;
+                    }
+                    if (!this.currentSession) this.create_session();
+                    const question = this.input.trim();
+                    const sessionId = this.currentSessionId;
+                    const session = this.currentSession;
+                    // 添加用户信息
+                    session.messages.push({
+                        id: ++this.messageId,
+                        role: 'user',
+                        content: question,
+                        time: new Date()
+                    });
+                    // 新对话标题使用用户的第一条消息
+                    if (session.title === '新对话') {
+                        session.title = question.length > 18 ? question.slice(0, 18) + '…' : question;
+                    }
+                    const aiMsg = {
+                        id: ++this.messageId,
+                        role: 'ai',
+                        content: '',
+                        pending: true,       // 等待回复时显示思考动画
+                        status: '正在理解你的问题…',
+                        time: new Date()
+                    };
+                    session.messages.push(aiMsg);
+                    this.chatList = session.messages;
+                    this.input = "";
+                    this.isSending = true;
+                    this.$nextTick(this.scrollToBottom);
+                    // 定义参数
+                    const params = `question=${encodeURIComponent(question)}&user_id=${encodeURIComponent(this.userId)}&session_id=${encodeURIComponent(sessionId)}`;
+                    // 创建sse流式对象
+                    const eve = new EventSource("/chat?" + params);
+                    this.eventSource = eve;
+                    let receivedText = "";
+                    // 工作流可能要先跑路由 / 意图识别 / 出题，几秒内没有任何可见输出；
+                    // 用阶段文案 + 动画让用户知道还在处理。
+                    const startedAt = Date.now();
+                    this.stopStatusTimer();
+                    this.statusTimer = setInterval(() => {
+                        const elapsed = Date.now() - startedAt;
+                        if (elapsed >= 8000) {
+                            aiMsg.status = '正在生成内容，请稍候…';
+                        } else if (elapsed >= 3000) {
+                            aiMsg.status = '正在准备面试流程…';
+                        }
+                    }, 1000);
+                    // 监听事件
+                    eve.onmessage = (e) => {
+                        // 打印流式输出
+                        console.log(e.data);
+                        // 把字符串格式的字典转换成json
+                        let data;
+                        try {
+                            data = JSON.parse(e.data);
+                        } catch (error) {
+                            // 若后端发送的不是JSON，则直接按文本展示
+                            data = { content: e.data };
+                        }
+                        if (data.done) {
+                            // 关闭流
+                            eve.close();
+                            this.stopStatusTimer();
+                            aiMsg.pending = false;
+                            aiMsg.status = '';
+                            if (this.eventSource === eve) this.eventSource = null;
+                            if (this.currentSessionId === sessionId) this.isSending = false;
+                            if (!receivedText) aiMsg.content = data.msg || '本次回答已结束。';
+                            // 这一轮已经存进记忆，顺手刷新本地搜索缓存
+                            this.refreshHistoryLines();
+                            this.$nextTick(this.scrollToBottom);
+                        } else {
+                            // 兼容常见的SSE字段名；请根据后端实际返回字段调整
+                            const chunk = data.content ?? data.answer ?? data.text ?? data.msg ?? data.data ?? "";
+                            if (typeof chunk === 'string' && chunk) {
+                                // 第一段真正内容到来前，忽略工作流内部节点漏出来的
+                                // "." / 空白 / 标点碎片，继续显示思考动画
+                                const trimmed = chunk.trim();
+                                const noise = !receivedText && (
+                                    !trimmed || /^[.。,，!！?？:：;；\-—\s]+$/.test(trimmed)
+                                );
+                                if (!noise) {
+                                    if (aiMsg.pending) {
+                                        aiMsg.pending = false;
+                                        aiMsg.status = '';
+                                        this.stopStatusTimer();
+                                    }
+                                    receivedText += chunk;
+                                    aiMsg.content = receivedText;
+                                }
+                            }
+                            this.$nextTick(this.scrollToBottom);
+                        }
+                    };
+                    eve.onerror = () => {
+                        // SSE连接异常时停止等待，避免界面一直显示思考中
+                        eve.close();
+                        this.stopStatusTimer();
+                        aiMsg.pending = false;
+                        aiMsg.status = '';
+                        if (this.eventSource === eve) this.eventSource = null;
+                        if (this.currentSessionId === sessionId) this.isSending = false;
+                        if (!receivedText) {
+                            aiMsg.content = '连接暂时中断，请检查后端服务或稍后重试。';
+                        }
+                    };
+                },
+                formatTime(value) {
+                    const date = value instanceof Date ? value : new Date(value);
+                    if (Number.isNaN(date.getTime())) return '';
+                    return date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false });
+                },
+                renderMarkdown(content) {
+                    if (!content) return '';
+                    if (window.marked) {
+                        const renderer = window.marked.parse ? window.marked.parse : window.marked;
+                        return renderer(String(content));
+                    }
+                    return String(content).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\n/g, '<br>');
+                },
+                scrollToBottom() {
+                    const area = this.$refs.chatArea;
+                    if (area) area.scrollTop = area.scrollHeight;
+                },
+                history(){
+                    const memory_id = this.session_id
+                }
+            }
+        });
+    </script>
+</body>
+</html>
+<style>
+    :root {
+        --bg: #f4f7fc;
+        --panel: #ffffff;
+        --ink: #202943;
+        --muted: #7e8aa5;
+        --line: #e8edf5;
+        --primary: #5b67e8;
+        --primary-dark: #4854d6;
+        --lavender: #eef0ff;
+        --shadow: 0 18px 55px rgba(39, 54, 99, .09);
+    }
+    * { box-sizing: border-box; }
+    body {
+        margin: 0;
+        min-height: 100vh;
+        color: var(--ink);
+        background:
+            radial-gradient(circle at 80% 0%, rgba(128, 142, 255, .13), transparent 28%),
+            var(--bg);
+        font-family: "Inter", "PingFang SC", "Microsoft YaHei", sans-serif;
+    }
+    button, input { font: inherit; }
+    button { cursor: pointer; }
+    #app { min-height: 100vh; padding: 22px; }
+    .workspace {
+        display: flex;
+        width: min(1440px, 100%);
+        height: calc(100vh - 44px);
+        min-height: 600px;
+        margin: 0 auto;
+        overflow: hidden;
+        background: var(--panel);
+        border: 1px solid rgba(226, 232, 243, .9);
+        border-radius: 24px;
+        box-shadow: var(--shadow);
+    }
+    .sidebar {
+        display: flex;
+        flex: 0 0 270px;
+        flex-direction: column;
+        padding: 24px 16px 18px;
+        color: #e9ecff;
+        background: linear-gradient(165deg, #252b55 0%, #30386d 55%, #3c4380 100%);
+    }
+    .brand { display: flex; align-items: center; gap: 12px; padding: 2px 8px 28px; }
+    .brand-logo {
+        display: grid;
+        width: 43px;
+        height: 43px;
+        place-items: center;
+        color: white;
+        font-size: 21px;
+        font-weight: 800;
+        border-radius: 14px;
+        background: linear-gradient(135deg, #8b96ff, #5f6be9);
+        box-shadow: 0 8px 22px rgba(10, 15, 55, .25);
+    }
+    .brand-title { font-size: 16px; font-weight: 750; letter-spacing: .2px; }
+    .brand-subtitle { margin-top: 5px; color: #b6bee8; font-size: 11px; letter-spacing: 1.2px; }
+    .new-chat {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 9px;
+        width: 100%;
+        padding: 13px 12px;
+        color: white;
+        font-weight: 650;
+        border: 1px solid rgba(255,255,255,.25);
+        border-radius: 13px;
+        background: rgba(255,255,255,.12);
+        transition: .2s ease;
+    }
+    .new-chat:hover { background: rgba(255,255,255,.2); transform: translateY(-1px); }
+    .side-heading {
+        margin: 28px 9px 12px;
+        color: #aeb7e3;
+        font-size: 11px;
+        font-weight: 750;
+        letter-spacing: 1.6px;
+    }
+    .history-list { flex: 1; min-height: 0; overflow-y: auto; }
+    .history-item {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        margin: 4px 0;
+        padding: 12px 11px;
+        color: #d5daf6;
+        border: 1px solid transparent;
+        border-radius: 11px;
+        transition: .18s ease;
+    }
+    .history-item:hover { background: rgba(255,255,255,.08); }
+    .history-item.active { color: white; background: rgba(255,255,255,.14); border-color: rgba(255,255,255,.08); }
+    .history-icon { flex: 0 0 auto; font-size: 15px; opacity: .9; }
+    /* flex:1 + min-width:0 是关键：不加的话 nowrap 的长名字不收缩，
+       会把右边的 × 按钮顶出侧边栏（看得见名字、点不到按钮） */
+    .history-name { flex: 1; min-width: 0; overflow: hidden; font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
+    .history-empty { padding: 12px 10px; color: #aeb7e3; font-size: 12px; line-height: 1.8; }
+    /* 历史搜索框 */
+    .side-search { display: flex; gap: 6px; margin: 14px 4px 0; }
+    .side-search input {
+        flex: 1; min-width: 0; padding: 8px 10px; color: #e9ecff; font-size: 12px;
+        border: 1px solid rgba(255,255,255,.18); border-radius: 9px;
+        background: rgba(255,255,255,.08); outline: 0;
+    }
+    .side-search input::placeholder { color: #9aa3d0; }
+    .side-search input:focus { border-color: rgba(255,255,255,.42); }
+    .side-search button {
+        flex: 0 0 34px; color: #e9ecff; font-size: 12px; font-weight: 700;
+        border: 1px solid rgba(255,255,255,.18); border-radius: 9px;
+        background: rgba(255,255,255,.12); transition: .18s ease;
+    }
+    .side-search button:hover { background: rgba(255,255,255,.2); }
+    .side-tip { margin: 8px 6px 0; color: #b6bee8; font-size: 11px; line-height: 1.6; }
+    /* 每条历史右侧的删除按钮 */
+    .history-del {
+        flex: 0 0 auto; margin-left: auto; padding: 0 5px; color: #9aa3d0;
+        font-size: 15px; line-height: 1.2; border-radius: 5px; transition: .15s ease;
+        /* 它是 span，不在全局 button { cursor: pointer } 的覆盖范围里 ——
+           不加这行鼠标移上去不变小手，看着就像点不了 */
+        cursor: pointer; user-select: none;
+    }
+    .history-del:hover { color: #ff9aa6; background: rgba(255,255,255,.12); }
+    /* 点第一下之后的"确认删"状态 */
+    .history-del.danger { color: #fff; font-size: 11px; background: #e8556d; }
+    /* 搜索定位时闪一下 */
+    .message-row.flash .bubble { animation: flash 1.2s ease; }
+    @keyframes flash {
+        0%, 100% { box-shadow: none; }
+        30% { box-shadow: 0 0 0 3px rgba(91, 103, 232, .38); }
+    }
+    .sidebar-footer {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        margin-top: 16px;
+        padding: 15px 8px 0;
+        border-top: 1px solid rgba(255,255,255,.13);
+    }
+    .avatar-small {
+        display: grid;
+        width: 34px;
+        height: 34px;
+        place-items: center;
+        color: #3d478f;
+        font-weight: 800;
+        border-radius: 50%;
+        background: #dfe3ff;
+    }
+    .footer-name { font-size: 12px; font-weight: 650; }
+    .footer-role { margin-top: 4px; color: #aeb7e3; font-size: 11px; }
+    .main { display: flex; flex: 1; min-width: 0; flex-direction: column; background: #fff; }
+    .topbar {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        min-height: 82px;
+        padding: 18px 32px;
+        border-bottom: 1px solid var(--line);
+    }
+    .page-title { margin: 0; font-size: 19px; font-weight: 760; letter-spacing: -.3px; }
+    .page-subtitle { margin-top: 7px; color: var(--muted); font-size: 12px; }
+    .topbar-actions { display: flex; align-items: center; gap: 10px; }
+    .profile-btn {
+        padding: 8px 14px;
+        color: var(--primary);
+        font-size: 12px;
+        font-weight: 650;
+        border: 1px solid #dfe3fb;
+        border-radius: 20px;
+        background: #f6f7ff;
+        transition: .2s ease;
+    }
+    .profile-btn:hover { border-color: #c8cdfd; background: var(--lavender); transform: translateY(-1px); }
+    .admin-btn {
+        padding: 8px 14px;
+        color: #8a5a12;
+        font-size: 12px;
+        font-weight: 650;
+        border: 1px solid #f0dfc0;
+        border-radius: 20px;
+        background: #fffaf0;
+        transition: .2s ease;
+    }
+    .admin-btn:hover { border-color: #e6cfa6; background: #fff4df; transform: translateY(-1px); }
+    .logout-btn {
+        padding: 8px 14px;
+        color: #b23b52;
+        font-size: 12px;
+        font-weight: 650;
+        border: 1px solid #f3d4da;
+        border-radius: 20px;
+        background: #fff5f7;
+        transition: .2s ease;
+    }
+    .logout-btn:hover { border-color: #eeb9c2; background: #fdeef1; transform: translateY(-1px); }
+    /* 用户画像弹窗 */
+    .modal-mask {
+        position: fixed;
+        inset: 0;
+        z-index: 50;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 24px;
+        background: rgba(22, 28, 58, .45);
+        backdrop-filter: blur(3px);
+    }
+    .modal-card {
+        display: flex;
+        width: min(680px, 100%);
+        max-height: calc(100vh - 48px);
+        flex-direction: column;
+        padding: 24px;
+        overflow-y: auto;
+        border-radius: 20px;
+        background: #fff;
+        box-shadow: 0 24px 70px rgba(20, 28, 70, .28);
+    }
+    .modal-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+    .modal-head h3 { margin: 0; font-size: 18px; font-weight: 760; }
+    .modal-head p { margin: 8px 0 0; color: var(--muted); font-size: 12px; line-height: 1.7; }
+    .modal-close {
+        flex: 0 0 auto;
+        width: 32px;
+        height: 32px;
+        color: var(--muted);
+        font-size: 20px;
+        line-height: 1;
+        border: 0;
+        border-radius: 9px;
+        background: transparent;
+    }
+    .modal-close:hover { color: var(--ink); background: #f2f4fa; }
+    .modal-loading { padding: 48px 0; color: var(--muted); font-size: 13px; text-align: center; }
+    .profile-editor {
+        width: 100%;
+        min-height: 240px;
+        margin-top: 18px;
+        padding: 14px 16px;
+        color: var(--ink);
+        font-size: 13px;
+        line-height: 1.8;
+        border: 1px solid #e2e7f2;
+        border-radius: 13px;
+        background: #fbfcff;
+        outline: 0;
+        resize: vertical;
+    }
+    .profile-editor:focus { border-color: #b8bffd; box-shadow: 0 0 0 4px rgba(91,103,232,.08); }
+    .profile-editor::placeholder { color: #a1abc0; }
+    .modal-tip { min-height: 18px; margin-top: 10px; color: var(--muted); font-size: 11px; line-height: 1.6; }
+    .modal-tip.error { color: #d94a62; }
+    .modal-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 18px; }
+    .ghost-btn {
+        padding: 10px 18px;
+        color: var(--muted);
+        font-size: 13px;
+        border: 1px solid #e2e7f2;
+        border-radius: 10px;
+        background: #fff;
+    }
+    .ghost-btn:hover { background: #f7f8fc; }
+    .save-btn {
+        padding: 10px 22px;
+        color: #fff;
+        font-size: 13px;
+        font-weight: 700;
+        border: 0;
+        border-radius: 10px;
+        background: var(--primary);
+    }
+    .save-btn:hover:not(:disabled) { background: var(--primary-dark); }
+    .save-btn:disabled { cursor: not-allowed; opacity: .6; }
+    /* 管理员用户管理弹窗 */
+    .admin-mask { align-items: flex-start; overflow-y: auto; padding: 30px 24px; }
+    .admin-card { width: min(1020px, 100%); }
+    .admin-toolbar { display: flex; gap: 10px; max-width: 520px; margin-top: 18px; }
+    .admin-toolbar input {
+        flex: 1;
+        min-width: 0;
+        padding: 10px 13px;
+        color: var(--ink);
+        font-size: 13px;
+        border: 1px solid #e2e7f2;
+        border-radius: 10px;
+        background: #fbfcff;
+        outline: 0;
+    }
+    .admin-toolbar input:focus { border-color: #b8bffd; box-shadow: 0 0 0 4px rgba(91,103,232,.08); }
+    .admin-table-wrap {
+        margin-top: 8px;
+        overflow-x: auto;
+        border: 1px solid #e8edf5;
+        border-radius: 12px;
+    }
+    .admin-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    .admin-table th, .admin-table td {
+        padding: 12px 13px;
+        text-align: left;
+        border-bottom: 1px solid #eef1f7;
+        white-space: nowrap;
+    }
+    .admin-table th {
+        color: var(--muted);
+        font-size: 11px;
+        font-weight: 750;
+        letter-spacing: .6px;
+        background: #fafbff;
+    }
+    .admin-table tr:last-child td { border-bottom: 0; }
+    .admin-table tbody tr:hover { background: #fbfcff; }
+    .admin-mono { color: var(--muted); font-variant-numeric: tabular-nums; }
+    .admin-name { font-weight: 700; }
+    .admin-role {
+        display: inline-block;
+        padding: 3px 9px;
+        color: #4854b8;
+        font-size: 11px;
+        font-weight: 700;
+        border-radius: 20px;
+        background: #eef0ff;
+    }
+    .admin-role.admin { color: #a2521a; background: #fff0e2; }
+    .has-profile { color: #278c6a; font-size: 12px; }
+    .no-profile { color: #a1abc0; font-size: 12px; }
+    .admin-link {
+        margin-left: 6px;
+        padding: 2px 4px;
+        color: var(--primary);
+        font-size: 12px;
+        border: 0;
+        background: transparent;
+    }
+    .admin-link:hover { text-decoration: underline; }
+    .admin-ops { display: flex; align-items: center; gap: 8px; }
+    .admin-ops select {
+        padding: 7px 9px;
+        color: var(--ink);
+        font-size: 12px;
+        border: 1px solid #e2e7f2;
+        border-radius: 8px;
+        background: #fff;
+        outline: 0;
+    }
+    .admin-ops select:disabled { color: var(--muted); background: #f6f7fb; cursor: not-allowed; }
+    .admin-danger {
+        padding: 7px 11px;
+        color: #d94a62;
+        font-size: 12px;
+        font-weight: 650;
+        border: 1px solid #f3d4da;
+        border-radius: 8px;
+        background: #fff5f7;
+    }
+    .admin-danger:hover { background: #fdeef1; }
+    .admin-self { color: var(--muted); font-size: 11px; }
+    .admin-empty { padding: 36px 0; color: var(--muted); text-align: center; }
+    .modal-tip.ok { color: #1f7d5c; }
+    .admin-profile-mask { z-index: 60; }
+    .profile-view {
+        margin: 18px 0 0;
+        padding: 16px;
+        min-height: 220px;
+        overflow: auto;
+        color: #34405c;
+        font-family: inherit;
+        font-size: 13px;
+        line-height: 1.85;
+        white-space: pre-wrap;
+        overflow-wrap: anywhere;
+        border: 1px solid #e2e7f2;
+        border-radius: 13px;
+        background: #fbfcff;
+    }
+    .profile-empty {
+        display: grid;
+        place-items: center;
+        color: var(--muted);
+        font-size: 14px;
+        text-align: center;
+    }
+    .chat-area {
+        flex: 1;
+        min-height: 0;
+        overflow-y: auto;
+        padding: 30px clamp(18px, 5vw, 76px) 24px;
+        scroll-behavior: smooth;
+        background:
+            radial-gradient(circle at 50% 0%, rgba(240,242,255,.55), transparent 42%),
+            #fff;
+    }
+    .welcome { max-width: 720px; margin: 5vh auto 30px; text-align: center; }
+    .welcome-icon {
+        display: grid;
+        width: 66px;
+        height: 66px;
+        margin: 0 auto 20px;
+        place-items: center;
+        color: white;
+        font-size: 29px;
+        border-radius: 21px;
+        background: linear-gradient(135deg, #8790ff, #5b67e8);
+        box-shadow: 0 12px 28px rgba(91,103,232,.25);
+    }
+    .welcome h2 { margin: 0; font-size: clamp(22px, 2.2vw, 29px); letter-spacing: -.7px; }
+    .welcome p { margin: 12px auto 25px; color: var(--muted); font-size: 14px; line-height: 1.8; }
+    .suggestions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; text-align: left; }
+    .suggestion {
+        padding: 16px 17px;
+        color: var(--ink);
+        text-align: left;
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        background: rgba(255,255,255,.9);
+        transition: .2s ease;
+    }
+    .suggestion:hover { border-color: #c8cdfd; background: #fafaff; transform: translateY(-2px); }
+    .suggestion-title { font-size: 13px; font-weight: 700; }
+    .suggestion-desc { margin-top: 6px; color: var(--muted); font-size: 12px; line-height: 1.6; }
+    .message-row { display: flex; gap: 12px; margin: 0 0 26px; align-items: flex-start; }
+    .message-row.user { flex-direction: row-reverse; }
+    .message-avatar {
+        display: grid;
+        flex: 0 0 36px;
+        width: 36px;
+        height: 36px;
+        place-items: center;
+        color: #fff;
+        font-size: 13px;
+        font-weight: 750;
+        border-radius: 12px;
+        background: linear-gradient(135deg, #7e89ff, #5662df);
+    }
+    .message-row.user .message-avatar { color: #4854a8; background: #e8ebff; }
+    .message-body { display: flex; max-width: min(78%, 760px); flex-direction: column; align-items: flex-start; }
+    .message-row.user .message-body { align-items: flex-end; }
+    .message-meta { display: flex; align-items: center; gap: 9px; margin: 2px 3px 8px; color: var(--muted); font-size: 11px; }
+    .message-meta strong { color: #424d68; font-size: 12px; font-weight: 700; }
+    .bubble {
+        padding: 13px 16px;
+        color: #34405c;
+        font-size: 14px;
+        line-height: 1.85;
+        overflow-wrap: anywhere;
+        border: 1px solid #edf0f7;
+        border-radius: 4px 16px 16px 16px;
+        background: #f7f8fc;
+    }
+    .message-row.user .bubble {
+        color: white;
+        border-color: transparent;
+        border-radius: 16px 4px 16px 16px;
+        background: linear-gradient(135deg, #6874ed, #5864dd);
+        box-shadow: 0 5px 14px rgba(91,103,232,.12);
+    }
+    .bubble p { margin: 0 0 9px; }
+    .bubble p:last-child { margin-bottom: 0; }
+    .bubble ul, .bubble ol { padding-left: 22px; }
+    .bubble pre { overflow-x: auto; padding: 12px; border-radius: 9px; background: #eef1f8; }
+    .bubble code { padding: 2px 5px; border-radius: 5px; background: rgba(100,112,160,.1); }
+    .message-row.user .bubble code { background: rgba(255,255,255,.18); }
+    .thinking { display: inline-flex; align-items: center; gap: 9px; color: #7a85a2; font-size: 13px; }
+    .thinking-dots { display: inline-flex; align-items: center; gap: 4px; }
+    .thinking-dots i {
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        background: #8b96e8;
+        animation: thinking-bounce 1.2s infinite ease-in-out;
+    }
+    .thinking-dots i:nth-child(2) { animation-delay: .15s; }
+    .thinking-dots i:nth-child(3) { animation-delay: .3s; }
+    @keyframes thinking-bounce {
+        0%, 80%, 100% { transform: translateY(0); opacity: .35; }
+        40% { transform: translateY(-4px); opacity: 1; }
+    }
+    .composer-wrap { padding: 16px clamp(18px, 5vw, 76px) 20px; border-top: 1px solid var(--line); background: #fff; }
+    .composer {
+        display: flex;
+        align-items: flex-end;
+        gap: 12px;
+        padding: 11px 12px 11px 18px;
+        border: 1px solid #e2e7f2;
+        border-radius: 17px;
+        background: #fbfcff;
+        box-shadow: 0 4px 16px rgba(40,54,96,.04);
+        transition: border-color .2s, box-shadow .2s;
+    }
+    .composer:focus-within { border-color: #b8bffd; box-shadow: 0 0 0 4px rgba(91,103,232,.08); }
+    .composer input { flex: 1; min-width: 0; padding: 8px 0; color: var(--ink); border: 0; outline: 0; background: transparent; font-size: 14px; }
+    .composer input::placeholder { color: #a1abc0; }
+    .send-btn {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 7px;
+        min-width: 88px;
+        padding: 11px 15px;
+        color: #fff;
+        font-size: 13px;
+        font-weight: 700;
+        border: 0;
+        border-radius: 11px;
+        background: var(--primary);
+        box-shadow: 0 5px 12px rgba(91,103,232,.2);
+        transition: .2s ease;
+    }
+    .send-btn:hover:not(:disabled) { background: var(--primary-dark); transform: translateY(-1px); }
+    .send-btn:disabled { cursor: not-allowed; opacity: .5; box-shadow: none; }
+    .voice-btn {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        flex: 0 0 auto;
+        width: 42px;
+        height: 42px;
+        padding: 0;
+        color: var(--primary);
+        font-size: 17px;
+        line-height: 1;
+        border: 1px solid #dfe4f3;
+        border-radius: 11px;
+        background: #fff;
+        transition: .2s ease;
+    }
+    .voice-btn:hover:not(:disabled) { border-color: #c8cdfd; background: #f7f8ff; transform: translateY(-1px); }
+    .voice-btn:disabled { cursor: not-allowed; opacity: .5; }
+    .voice-icon { display: inline-flex; align-items: center; justify-content: center; }
+    .voice-icon svg { display: block; }
+    .voice-btn.recording {
+        color: #fff;
+        border-color: transparent;
+        background: #e8556d;
+        box-shadow: 0 0 0 4px rgba(232, 85, 109, .16);
+        animation: voice-pulse 1.2s ease-in-out infinite;
+    }
+    @keyframes voice-pulse { 50% { box-shadow: 0 0 0 9px rgba(232, 85, 109, .05); } }
+    .composer-tip { margin-top: 10px; color: #a0a9bc; font-size: 11px; text-align: center; }
+    .composer-tip.error { color: #d94a62; }
+    @media (max-width: 760px) {
+        #app { padding: 0; }
+        .workspace { height: 100vh; min-height: 540px; border: 0; border-radius: 0; }
+        .sidebar { flex-basis: 72px; padding: 18px 9px 12px; align-items: center; }
+        .brand { padding: 0 0 22px; }
+        .brand-logo { width: 43px; height: 43px; }
+        .brand-copy, .side-heading, .history-name, .sidebar-footer .footer-copy { display: none; }
+        .new-chat { width: 48px; height: 48px; padding: 0; font-size: 0; }
+        .new-chat span { font-size: 23px; }
+        .history-list { width: 100%; margin-top: 16px; }
+        .history-item { justify-content: center; padding: 12px 0; }
+        .history-empty { display: none; }
+        .sidebar-footer { justify-content: center; padding: 14px 0 0; }
+        .topbar { min-height: 72px; padding: 15px 18px; }
+        .topbar-actions { gap: 7px; }
+        .profile-btn, .logout-btn, .admin-btn { padding: 7px 10px; font-size: 11px; }
+        .modal-mask { padding: 14px; }
+        .modal-card { padding: 18px; }
+        .profile-editor { min-height: 200px; }
+        .chat-area { padding: 22px 16px; }
+        .welcome { margin-top: 6vh; }
+        .suggestions { grid-template-columns: 1fr; }
+        .message-body { max-width: 86%; }
+        .composer-wrap { padding: 12px 14px 16px; }
+        .send-btn { min-width: 45px; padding: 11px; font-size: 0; }
+        .send-btn .send-icon { font-size: 17px; }
+    }
+</style>

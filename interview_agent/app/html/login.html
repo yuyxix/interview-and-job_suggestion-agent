@@ -1,0 +1,338 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>登录 / 注册 · AI 多智能体面试平台</title>
+    <!-- Vue2 CDN（和 chat.html 保持一致） -->
+    <script src="https://cdn.jsdelivr.net/npm/vue@2.7.14/dist/vue.js"></script>
+</head>
+<body>
+<div id="app">
+    <div class="card">
+        <div class="brand">
+            <div class="logo">AI</div>
+            <div class="brand-text">
+                <div class="brand-title">智面 AI</div>
+                <div class="brand-sub">MULTI-AGENT INTERVIEW</div>
+            </div>
+        </div>
+
+        <!-- 已登录：显示状态 + 进系统 / 退出 -->
+        <div v-if="token" class="logged">
+            <div class="ok-icon">✓</div>
+            <div class="ok-title">已登录</div>
+            <div class="ok-name">{{ username || '(未取到用户名)' }}</div>
+            <div class="token-box">token：{{ token.slice(0, 46) }}…</div>
+            <button class="btn" @click="goChat">进入面试系统</button>
+            <button class="btn ghost" @click="logout">退出登录</button>
+        </div>
+
+        <template v-else>
+            <!-- 切换 登录 / 注册 -->
+            <div class="tabs">
+                <button :class="{ active: tab === 'login' }" @click="switchTab('login')">登录</button>
+                <button :class="{ active: tab === 'register' }" @click="switchTab('register')">注册</button>
+            </div>
+
+            <!-- 登录 -->
+            <div v-if="tab === 'login'" class="form">
+                <input v-model.trim="loginForm.email" type="email" placeholder="邮箱"
+                       @keyup.enter="doLogin">
+                <input v-model="loginForm.password" type="password" placeholder="密码"
+                       @keyup.enter="doLogin">
+                <button class="btn" :disabled="loading" @click="doLogin">
+                    {{ loading ? '登录中…' : '登录' }}
+                </button>
+            </div>
+
+            <!-- 注册：三步（发验证码 → 校验 → 提交） -->
+            <div v-else class="form">
+                <div class="step">
+                    <input v-model.trim="regForm.email" type="email" placeholder="邮箱"
+                           :disabled="codeOk">
+                    <!-- 没发过就只能"发送"；发过之后变成"重新发送"，并带倒计时 -->
+                    <button class="btn small" :disabled="loading || countdown > 0" @click="sendCode">
+                        <template v-if="countdown > 0">{{ countdown }}s</template>
+                        <template v-else-if="codeSent">重新发送</template>
+                        <template v-else>发送验证码</template>
+                    </button>
+                </div>
+                <div class="step">
+                    <input v-model.trim="regForm.code" type="text" maxlength="6"
+                           placeholder="6 位验证码" :disabled="!codeSent || codeOk"
+                           @keyup.enter="verifyCode">
+                    <!-- 没发送成功之前，验证按钮是禁用的 -->
+                    <button class="btn small"
+                            :disabled="loading || !codeSent || codeOk"
+                            @click="verifyCode">
+                        {{ codeOk ? '已通过' : '验证' }}
+                    </button>
+                </div>
+                <div class="hint" v-if="codeOk">验证码已通过，填好用户名和密码就能注册了</div>
+                <input v-model.trim="regForm.username" type="text" placeholder="用户名"
+                       :disabled="!codeOk">
+                <input v-model="regForm.password" type="password" placeholder="密码"
+                       :disabled="!codeOk" @keyup.enter="doRegister">
+                <button class="btn" :disabled="loading || !codeOk" @click="doRegister">
+                    {{ loading ? '提交中…' : '注册' }}
+                </button>
+            </div>
+        </template>
+
+        <div class="msg" :class="msgType" v-if="msg">{{ msg }}</div>
+    </div>
+</div>
+
+<script>
+    new Vue({
+        el: '#app',
+        data: {
+            tab: 'login',
+            loading: false,
+            msg: '',
+            msgType: 'info',
+            // sessionStorage 里【只放 token 和 user_id】两样；
+            // 用户名这类只用于显示的东西不落盘，从 token 里解出来（见 decodeToken）
+            token: sessionStorage.getItem('token') || '',
+            username: '',
+            loginForm: { email: '', password: '' },
+            regForm: { email: '', code: '', username: '', password: '' },
+            codeOk: false,
+            codeSent: false,   // 验证码发送成功了吗 —— 决定"验证"按钮能不能点
+            countdown: 0,      // 重发倒计时（秒）
+            timer: null
+        },
+        created() {
+            // 刷新页面后从 token 里把用户名解出来显示（用户名不落盘）
+            this.username = this.decodeToken(this.token).username || '';
+        },
+        beforeDestroy() {
+            if (this.timer) clearInterval(this.timer);
+        },
+        methods: {
+            // 从 JWT 里解出 payload —— 只用于显示，不做校验（校验是后端的事）
+            decodeToken(token) {
+                try {
+                    const b64 = token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/');
+                    const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+                    return JSON.parse(new TextDecoder().decode(bytes));
+                } catch (e) {
+                    return {};
+                }
+            },
+            // 统一提示
+            tip(text, type) {
+                this.msg = text;
+                this.msgType = type || 'info';
+            },
+            switchTab(t) {
+                this.tab = t;
+                this.msg = '';
+            },
+            // 倒计时：防止短时间内狂点"重新发送"
+            startCountdown(seconds) {
+                if (this.timer) clearInterval(this.timer);
+                this.countdown = seconds;
+                this.timer = setInterval(() => {
+                    this.countdown -= 1;
+                    if (this.countdown <= 0) {
+                        clearInterval(this.timer);
+                        this.timer = null;
+                        this.countdown = 0;
+                    }
+                }, 1000);
+            },
+            // 后端统一返回 {code, msg, data}，这里统一处理
+            async request(url, options) {
+                this.loading = true;
+                try {
+                    const res = await fetch(url, options);
+                    // 后端有可能返回空 body（某个分支没走到 return）→ 别让前端直接崩
+                    const data = await res.json().catch(() => null);
+                    return data || {
+                        code: 500,
+                        msg: '服务端没有返回内容（多半是后端某个分支没写 return）',
+                        data: null
+                    };
+                } catch (e) {
+                    return { code: 500, msg: '请求失败：' + e.message, data: null };
+                } finally {
+                    this.loading = false;
+                }
+            },
+            // 登录：后端是 GET /login?email=&password=
+            async doLogin() {
+                if (!this.loginForm.email || !this.loginForm.password) {
+                    return this.tip('邮箱和密码都要填', 'err');
+                }
+                const url = '/login?email=' + encodeURIComponent(this.loginForm.email)
+                          + '&password=' + encodeURIComponent(this.loginForm.password);
+                const res = await this.request(url);
+                if (res.code === 200) {
+                    // ★ sessionStorage 里只放这两样：token（通行证）和 user_id（记忆隔离要用）
+                    sessionStorage.setItem('token', res.data.token);
+                    sessionStorage.setItem('user_id', res.data.user_id || '');
+                    // 所有角色登录后都进聊天页；管理员的管理功能在聊天页里显示。
+                    // 用 replace 而不是 href：登录页不留在后退栈里
+                    location.replace('/static/chat.html');
+                } else {
+                    this.tip(res.msg || '登录失败', 'err');
+                }
+            },
+            // 第一步：发验证码
+            async sendCode() {
+                if (!this.regForm.email) return this.tip('先填邮箱', 'err');
+                const res = await this.request('/sendemail?email=' + encodeURIComponent(this.regForm.email));
+                if (res.code === 200) {
+                    this.codeSent = true;        // 发成功了才允许点"验证"
+                    this.startCountdown(60);     // 60 秒内不让重复发
+                    this.tip('验证码已发送，请查收邮箱（60 秒内有效）', 'ok');
+                } else {
+                    // 发失败就保持"验证"禁用 —— 别让用户拿着一个不存在的验证码去点验证
+                    this.codeSent = false;
+                    this.tip(res.msg || '验证码发送失败，请检查邮箱地址或稍后再试', 'err');
+                }
+            },
+            // 第二步：校验验证码
+            async verifyCode() {
+                if (!this.regForm.email || !this.regForm.code) return this.tip('邮箱和验证码都要填', 'err');
+                const res = await this.request('/VerifyCode', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ email: this.regForm.email, code: this.regForm.code })
+                });
+                if (res.code === 200) {
+                    this.codeOk = true;
+                    this.tip('验证码通过，请设置用户名和密码', 'ok');
+                } else {
+                    // 明确提示原因 + 引导重发（后端现在会返回"验证码错误或已过期"）
+                    this.tip((res.msg || '验证码错误') + '，可以点"重新发送"再试一次', 'err');
+                }
+            },
+            // 第三步：提交注册
+            async doRegister() {
+                if (!this.regForm.username || !this.regForm.password) {
+                    return this.tip('用户名和密码都要填', 'err');
+                }
+                const res = await this.request('/register', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        username: this.regForm.username,
+                        email: this.regForm.email,
+                        password: this.regForm.password
+                    })
+                });
+                if (res.code === 200) {
+                    this.tip('注册成功，正在切到登录…', 'ok');
+                    // 注册成功后把邮箱带到登录表单，省得再输一遍
+                    this.loginForm.email = this.regForm.email;
+                    this.loginForm.password = '';
+                    this.regForm = { email: '', code: '', username: '', password: '' };
+                    this.codeOk = false;
+                    setTimeout(() => { this.tab = 'login'; this.msg = ''; }, 900);
+                } else {
+                    this.tip(res.msg || '注册失败', 'err');
+                }
+            },
+            goChat() {
+                location.href = '/static/chat.html';
+            },
+            logout() {
+                sessionStorage.removeItem('token');
+                sessionStorage.removeItem('user_id');
+                sessionStorage.removeItem('session_id');
+                this.token = '';
+                this.username = '';
+                this.msg = '';
+            }
+        }
+    });
+</script>
+</body>
+<style>
+    :root {
+        --bg: #f4f7fc;
+        --ink: #202943;
+        --muted: #7e8aa5;
+        --line: #e8edf5;
+        --primary: #5b67e8;
+        --primary-dark: #4854d6;
+    }
+    * { box-sizing: border-box; }
+    body {
+        display: grid;
+        min-height: 100vh;
+        margin: 0;
+        place-items: center;
+        color: var(--ink);
+        background: radial-gradient(circle at 80% 0%, rgba(128, 142, 255, .13), transparent 28%), var(--bg);
+        font-family: "Inter", "PingFang SC", "Microsoft YaHei", sans-serif;
+    }
+    button, input { font: inherit; }
+    button { cursor: pointer; }
+    .card {
+        width: min(400px, calc(100vw - 32px));
+        padding: 32px 30px 26px;
+        background: #fff;
+        border: 1px solid rgba(226, 232, 243, .9);
+        border-radius: 22px;
+        box-shadow: 0 18px 55px rgba(39, 54, 99, .09);
+    }
+    .brand { display: flex; align-items: center; gap: 12px; margin-bottom: 24px; }
+    .logo {
+        display: grid; width: 43px; height: 43px; place-items: center;
+        color: #fff; font-size: 19px; font-weight: 800; border-radius: 14px;
+        background: linear-gradient(135deg, #8b96ff, #5f6be9);
+        box-shadow: 0 8px 22px rgba(10, 15, 55, .2);
+    }
+    .brand-title { font-size: 16px; font-weight: 750; }
+    .brand-sub { margin-top: 5px; color: var(--muted); font-size: 11px; letter-spacing: 1.2px; }
+    .tabs { display: flex; gap: 8px; margin-bottom: 18px; padding: 5px; border-radius: 12px; background: #f3f5fb; }
+    .tabs button {
+        flex: 1; padding: 9px; color: var(--muted); font-size: 13px; font-weight: 650;
+        border: 0; border-radius: 9px; background: transparent; transition: .18s ease;
+    }
+    .tabs button.active { color: #fff; background: var(--primary); box-shadow: 0 4px 12px rgba(91,103,232,.25); }
+    .form { display: flex; flex-direction: column; gap: 11px; }
+    .form input {
+        width: 100%; padding: 12px 14px; color: var(--ink); font-size: 14px;
+        border: 1px solid var(--line); border-radius: 11px; outline: 0; background: #fbfcff;
+        transition: border-color .18s, box-shadow .18s;
+    }
+    .form input:focus { border-color: #b8bffd; box-shadow: 0 0 0 4px rgba(91,103,232,.08); }
+    .form input:disabled { color: #a9b1c4; background: #f6f7fb; }
+    .step { display: flex; gap: 8px; }
+    .step input { flex: 1; }
+    .btn {
+        padding: 12px; color: #fff; font-size: 14px; font-weight: 700;
+        border: 0; border-radius: 11px; background: var(--primary);
+        box-shadow: 0 5px 12px rgba(91,103,232,.2); transition: .2s ease;
+    }
+    .btn:hover:not(:disabled) { background: var(--primary-dark); transform: translateY(-1px); }
+    .btn:disabled { cursor: not-allowed; opacity: .5; box-shadow: none; }
+    .btn.small { flex: 0 0 92px; padding: 12px 8px; font-size: 13px; }
+    .btn.ghost { margin-top: 8px; color: var(--muted); background: #f3f5fb; box-shadow: none; }
+    .btn.ghost:hover { background: #e9edf8; }
+    .hint { color: #278c6a; font-size: 12px; }
+    .msg { margin-top: 14px; padding: 10px 12px; font-size: 12.5px; border-radius: 10px; line-height: 1.6; }
+    .msg.info { color: #4a5670; background: #f3f5fb; }
+    .msg.ok { color: #1f7d5c; background: #eaf9f2; }
+    .msg.err { color: #b23b52; background: #fdeef1; }
+    .logged { text-align: center; }
+    .ok-icon {
+        display: grid; width: 54px; height: 54px; margin: 4px auto 14px;
+        place-items: center; color: #fff; font-size: 26px; border-radius: 50%;
+        background: linear-gradient(135deg, #51c99a, #32bd89);
+        box-shadow: 0 10px 24px rgba(50, 189, 137, .28);
+    }
+    .ok-title { font-size: 17px; font-weight: 750; }
+    .ok-name { margin-top: 7px; color: var(--primary); font-size: 14px; font-weight: 700; }
+    .token-box {
+        margin: 14px 0 18px; padding: 10px 12px; color: var(--muted);
+        font-size: 11px; word-break: break-all; text-align: left;
+        border: 1px dashed var(--line); border-radius: 10px; background: #fbfcff;
+    }
+</style>
+</html>
